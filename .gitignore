@@ -1,0 +1,16 @@
+# 敏感文件
+*.env
+key.env
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 虚拟环境
+venv/
+.venv/
+
+# 数据与日志
+data/output/*
+data/vector_db/
+.streamlit/
