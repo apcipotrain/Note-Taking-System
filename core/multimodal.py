@@ -18,12 +18,17 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
-def analyze_handwriting(image_path):
+def analyze_handwriting(image_path, extra_feedback=""):
     # 调用多模态模型识别手写笔记，并提取颜色和样式元数据
     base64_image = encode_image(image_path)
 
+    feedback_info = f"\n⚠️ 上次识别反馈（请务必根据此改进）：{extra_feedback}\n" if extra_feedback else ""
+
     prompt = """
     你是一个专业的手写笔记分析专家。请识别图片中的内容并输出为 JSON 格式。
+    以下是反馈信息：{feedback_info}
+    
+    
     要求：
     1. 识别所有文字内容，保持原始层级（标题、段落、列表）。
     2. 特别标注颜色信息：如果使用了红笔、马克笔高亮，请在 style 字段中注明。
@@ -37,7 +42,7 @@ def analyze_handwriting(image_path):
     """
 
     response = client.chat.completions.create(
-        model="qwen3-vl-plus",  # 或者使用 qwen3-vl-max 等
+        model="qwen3-vl-plus",
         messages=[
             {
                 "role": "user",
@@ -50,17 +55,21 @@ def analyze_handwriting(image_path):
                 ],
             }
         ],
-        response_format={"type": "json_object"}  # 强制返回 JSON
+        # 建议先去掉这个，或者确保 prompt 强制要求返回 {"data": [...]}
+        # response_format={"type": "json_object"}
     )
 
     content = response.choices[0].message.content
-    # 清理掉可能存在的 Markdown 标签 ```json
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
-
-    return json.loads(content)
+    try:
+        # 增加清洗逻辑，防止模型返回 ```json ... ```
+        import re
+        json_match = re.search(r'(\[.*\]|\{.*\})', content, re.S)
+        if json_match:
+            return json.loads(json_match.group(1))
+        return json.loads(content)
+    except Exception as e:
+        print(f"解析失败，原始内容: {content}")
+        return []  # 失败返回空列表
 
 # 测试代码
 if __name__ == "__main__":

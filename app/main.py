@@ -39,12 +39,13 @@ with st.sidebar:
 
 # 3. 主界面逻辑
 if uploaded_file is not None:
-    # 保存临时文件
+    # 第一步：先定义并保存文件，确保 input_path 存在
     input_path = f"data/input/{uploaded_file.name}"
+    os.makedirs("data/input", exist_ok=True)  # 确保目录存在
     with open(input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    # 展示原图
+    # 展示界面
     col1, col2 = st.columns(2)
 
     with col1:
@@ -57,28 +58,46 @@ if uploaded_file is not None:
 
         if st.button("开始转换 ✨"):
             if not os.environ.get("DASHSCOPE_API_KEY"):
-                st.error("请先在侧边栏输入 API Key")
+                st.error("请先在侧边栏配置 API Key")
             else:
-                with st.spinner("Agent 正在协作（识别 -> 检索 -> 排版）..."):
+                # 第二步：在这里进行 Agent 协作
+                with st.spinner("Agent 正在协作 (识别 -> 验证 -> 检索 -> 排版)..."):
                     try:
-                        # 执行 LangGraph 工作流
-                        inputs = {"image_path": input_path}
-                        result = app.invoke(inputs)
+                        # 初始化输入状态，此时 input_path 已经定义好了
+                        inputs = {
+                            "image_path": input_path,
+                            "retry_count": 0,
+                            "error_msg": "",
+                            "is_valid": False
+                        }
 
-                        # 获取最终生成的 Markdown
-                        md_content = result.get("final_markdown", "生成失败")
+                        result = {}
+                        # 使用 stream 模式展示中间进度
+                        status_placeholder = st.empty()
+                        for event in app.stream(inputs):
+                            for node_name, node_state in event.items():
+                                # status_placeholder.write(f"✔️ 节点执行完成: {node_name}")
+                                result.update(node_state)
 
-                        # 渲染 Markdown
-                        st.markdown(md_content)
+                        # 第三步：渲染结果
+                        if "final_markdown" in result:
+                            md_content = result["final_markdown"]
+                            st.markdown(md_content)
 
-                        # 提供下载按钮
-                        st.download_button(
-                            label="下载 Markdown 文件",
-                            data=md_content,
-                            file_name=f"{uploaded_file.name.split('.')[0]}.md",
-                            mime="text/markdown"
-                        )
-                        st.success("处理完成！")
+                            st.download_button(
+                                label="下载 Markdown 文件",
+                                data=md_content,
+                                file_name=f"{uploaded_file.name.split('.')[0]}.md",
+                                mime="text/markdown"
+                            )
+                            st.success("处理完成！")
+                        else:
+                            # 错误排查：输出最后的错误信息
+                            st.error(f"转换未完成。最后错误：{result.get('error_msg', '未知原因')}")
+                            if "raw_json" in result:
+                                with st.expander("查看原始识别数据"):
+                                    st.json(result["raw_json"])
+
                     except Exception as e:
                         st.error(f"处理过程中出错: {e}")
 else:
