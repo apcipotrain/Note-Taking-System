@@ -62,25 +62,27 @@ def validator_node(state: AgentState):
     retry_count = state.get("retry_count", 0)
 
     if not data:
-        return {"is_valid": False, "error_msg": "内容为空，请重新识别。"}
+        return {"is_valid": False, "error_msg": "内容为空，请重新识别。", "retry_count": retry_count}
 
     # 评判标准 1：覆盖度检查（颜色和公式）
-    has_color = any(item.get("style", {}).get("color") != "black" for item in data)
+    has_color = any(
+        item.get("style", {}).get("color") not in ("black", None, "")
+        or item.get("style", {}).get("highlight")
+        for item in data
+    )
     has_formula = any(item.get("type") in ["formula", "diagram"] for item in data)
 
     # 评判标准 2：信息紧凑度
-    # 如果单条内容字数过多（冗余），或者总条目数异常大
     total_chars = sum(len(str(item.get("content", ""))) for item in data)
     avg_len = total_chars / len(data) if data else 0
 
     issues = []
 
-    # 逻辑：如果重试次数少，且没发现颜色/公式，强制要求更精细的细节
     if not has_color and retry_count < 2:
-        issues.append("未发现颜色细节，请检查是否有红笔标记被忽略")
-
-    # 逻辑：判定是否不够简洁（单条内容太啰嗦）
-    if avg_len > 100:
+        issues.append("未发现颜色细节，请检查是否有红笔/荧光笔标记被忽略")
+    if not has_formula and retry_count < 2:
+        issues.append("请检查是否遗漏了数学公式或手绘图表")
+    if avg_len > 120:
         issues.append("识别内容过于冗长，请重新提炼，用最简洁的语言覆盖所有细节")
 
     if issues:
@@ -88,10 +90,10 @@ def validator_node(state: AgentState):
         return {
             "is_valid": False,
             "error_msg": feedback,
-            "retry_count": retry_count  # 状态由 router 自动累加，这里可以不传
+            "retry_count": retry_count,
         }
 
-    return {"is_valid": True}
+    return {"is_valid": True, "retry_count": retry_count}
 
 def rag_node(state: AgentState):
     """检索增强节点"""
@@ -111,18 +113,25 @@ def formatter_node(state: AgentState):
     return {"final_markdown": markdown}
 
 
+def graceful_fallback_node(state: AgentState):
+    """当重试耗尽时，直接使用最后一次识别结果继续流程，避免用户一无所获。"""
+    print("--- [Node: Fallback] 重试耗尽，使用当前结果继续 ---")
+    return {"is_valid": True}
+
+
 # --- 3. 定义路由决策 (Conditional Edges) ---
 
-def router(state: AgentState) -> Literal["to_rag", "to_retry", "to_end"]:
-    # 如果验证通过
+def router(state: AgentState) -> Literal["to_rag", "to_retry", "to_fallback", "to_end"]:
     if state.get("is_valid"):
         return "to_rag"
 
-    # 如果验证不通过且重试次数未超过 3 次
     if state.get("retry_count", 0) < 3:
         return "to_retry"
 
-    # 超过次数或彻底失败
+    # 有数据就走 fallback 继续，完全没数据才 end
+    if state.get("raw_json"):
+        return "to_fallback"
+
     return "to_end"
 
 
@@ -135,6 +144,7 @@ workflow.add_node("vision_processor", vision_node)
 workflow.add_node("quality_validator", validator_node)
 workflow.add_node("rag_retriever", rag_node)
 workflow.add_node("note_formatter", formatter_node)
+workflow.add_node("graceful_fallback", graceful_fallback_node)
 
 # 连线
 workflow.set_entry_point("vision_processor")
@@ -147,7 +157,8 @@ workflow.add_conditional_edges(
     {
         "to_rag": "rag_retriever",
         "to_retry": "vision_processor",
-        "to_end": END
+        "to_fallback": "rag_retriever",
+        "to_end": END,
     }
 )
 

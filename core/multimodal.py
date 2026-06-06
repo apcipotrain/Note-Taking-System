@@ -22,24 +22,26 @@ def analyze_handwriting(image_path, extra_feedback=""):
     # 调用多模态模型识别手写笔记，并提取颜色和样式元数据
     base64_image = encode_image(image_path)
 
-    feedback_info = f"\n⚠️ 上次识别反馈（请务必根据此改进）：{extra_feedback}\n" if extra_feedback else ""
+    feedback_section = ""
+    if extra_feedback:
+        feedback_section = f"\n⚠️ 【上次识别反馈，请务必根据此改进】：{extra_feedback}\n"
 
-    prompt = """
-    你是一个专业的手写笔记分析专家。请识别图片中的内容并输出为 JSON 格式。
-    以下是反馈信息：{feedback_info}
-    
-    
-    要求：
-    1. 识别所有文字内容，保持原始层级（标题、段落、列表）。
-    2. 特别标注颜色信息：如果使用了红笔、马克笔高亮，请在 style 字段中注明。
-    3. 如果有手写绘图或公式，请在 type 字段标注为 'diagram' 或 'formula' 并描述其内容。
-    输出格式示例：
-    [
-      {"type": "header", "level": 1, "content": "卷积神经网络", "style": {"color": "black"}},
-      {"type": "text", "content": "核心概念：特征提取", "style": {"color": "red", "highlight": true}},
-      {"type": "list_item", "content": "卷积层", "style": {"color": "blue"}}
-    ]
-    """
+    prompt = f"""你是一个专业的手写笔记分析专家。请识别图片中的所有内容并输出为 JSON 格式。
+{feedback_section}
+要求：
+1. 识别所有文字内容，保持原始层级结构（标题、段落、列表）。
+2. 特别标注颜色信息：如果使用了红笔、马克笔高亮、荧光笔标注，请在 style 字段中注明 color 和 highlight 属性。
+3. 如果有手写绘图或数学公式，请在 type 字段标注为 'diagram' 或 'formula' 并描述其内容。
+4. 每一条内容尽可能简洁，不要将大段文字合并成一条。
+
+输出格式示例：
+[
+  {{"type": "header", "level": 1, "content": "卷积神经网络", "style": {{"color": "black"}}}},
+  {{"type": "text", "content": "核心概念：特征提取", "style": {{"color": "red", "highlight": true}}}},
+  {{"type": "list_item", "content": "卷积层", "style": {{"color": "blue"}}}}
+]
+
+请直接输出 JSON 数组，不要包含 ```json 标记。"""
 
     response = client.chat.completions.create(
         model="qwen3-vl-plus",

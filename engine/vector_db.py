@@ -53,13 +53,36 @@ class VectorEngine:
         )
         print(f"成功存入 {len(texts)} 条知识到向量库")
 
-    def query(self, query_text: str, n_results: int = 2):
+    def query(self, query_text: str, n_results: int = 5):
         """根据输入检索最相关的背景知识"""
         query_embedding = self.get_embedding(query_text)
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=n_results
+            n_results=n_results,
+            include=["documents", "distances", "metadatas"],
         )
-        if results and results['documents']:
-            return results['documents'][0]
+        if results and results["documents"]:
+            docs = results["documents"][0]
+            distances = results.get("distances", [[1.0] * len(docs)])[0]
+            # 返回 (文档, 距离) 对
+            return list(zip(docs, distances))
         return []
+
+    def batch_query(self, query_texts: list, n_results: int = 5, distance_threshold: float = 1.5):
+        """批量检索多个查询，合并去重排序。
+
+        distance_threshold: 余弦距离阈值，超过此值的认为不相关，建议范围 0.8~1.5。
+        注意：阿里 text-embedding-v2 返回的是归一化向量，距离范围 [0, 2]。
+        0 = 完全相同，2 = 完全无关。
+        """
+        seen = {}
+        for text in query_texts:
+            results = self.query(text, n_results=n_results)
+            for doc, dist in results:
+                if dist > distance_threshold:
+                    continue
+                if doc not in seen or dist < seen[doc]:
+                    seen[doc] = dist
+        # 按距离升序（越近越好）
+        sorted_docs = sorted(seen.items(), key=lambda x: x[1])
+        return [doc for doc, _ in sorted_docs]
